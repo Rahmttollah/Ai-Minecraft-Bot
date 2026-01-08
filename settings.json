@@ -1,0 +1,32 @@
+{
+  "bot-account": {
+    "username": "",
+    "password": "",
+    "type": "offline"
+  },
+  "server": {
+    "ip": "YouTubeSeason1.aternos.me",
+    "port": 21942,
+    "version": "1.20.1",
+    "history": []
+  },
+  "position": {
+    "enabled": false,
+    "x": 0,
+    "y": 55,
+    "z": 0
+  },
+  "utils": {
+    "auto-auth": {
+      "enabled": true,
+      "password": "P667788"
+    },
+    "chat-log": true,
+    "auto-reconnect": true,
+    "auto-recconect-delay": 15000,
+    "join-command": {
+      "enabled": true,
+      "command": "/mvtp world"
+    }
+  }
+}
