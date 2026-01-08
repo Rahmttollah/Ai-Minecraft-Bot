@@ -1,20 +1,14 @@
 {
-  "bot-account": {
-    "username": "",
-    "password": "",
+  "botAccount": {
+    "namePrefix": "Player_",
+    "randomName": true,
+    "initialCount": 0,
     "type": "offline"
   },
   "server": {
     "ip": "YouTubeSeason1.aternos.me",
     "port": 21942,
-    "version": "1.20.1",
-    "history": []
-  },
-  "position": {
-    "enabled": false,
-    "x": 0,
-    "y": 55,
-    "z": 0
+    "version": "1.20.1"
   },
   "utils": {
     "auto-auth": {
@@ -23,10 +17,16 @@
     },
     "chat-log": true,
     "auto-reconnect": true,
-    "auto-recconect-delay": 15000,
+    "auto-reconnect-delay": 15000,
+    "anti-afk": true,
     "join-command": {
       "enabled": true,
       "command": "/mvtp world"
     }
+  },
+  "combat": {
+    "auto-weapon": true,
+    "auto-armor": true,
+    "friendly-fire": false
   }
 }
