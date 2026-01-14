@@ -628,22 +628,43 @@ function createNewBot(botNumber = 1, useNewIdentity = false, customName = null, 
       bot.pvp.stop();
     });
     
-    // IMPROVED CHAT DETECTION - Works with Essential plugin
+    // ========== IMPROVED CHAT DETECTION FOR ESSENTIAL PLUGIN ==========
+    
+    // Method 1: Listen to ALL chat packets (most reliable for Essential)
     bot._client.on('chat', (packet) => {
       try {
         if (packet.message && typeof packet.message === 'string') {
-          const message = packet.message;
+          const rawMessage = packet.message;
           
           // Clean color codes
-          const cleanMsg = message.replace(/§[0-9a-fk-or]/g, '').trim();
+          let cleanMsg = rawMessage.replace(/§[0-9a-fk-or]/g, '').trim();
           
-          if (cleanMsg.includes('<') && cleanMsg.includes('>')) {
+          // Essential plugin format detection
+          if (cleanMsg.includes(':') && !cleanMsg.startsWith('§')) {
+            // Format: "PlayerName: message" (Essential style)
+            const colonIndex = cleanMsg.indexOf(':');
+            if (colonIndex > 0) {
+              const username = cleanMsg.substring(0, colonIndex).trim();
+              const chatMessage = cleanMsg.substring(colonIndex + 1).trim();
+              
+              if (username && chatMessage && username !== bot.username) {
+                addGameLog(`💬 <${username}> ${chatMessage}`, botNumber);
+                
+                // Check for global leave command
+                if (chatMessage.toLowerCase().includes('bot leave')) {
+                  activateGlobalLeave();
+                }
+              }
+            }
+          } 
+          // Standard format detection
+          else if (cleanMsg.includes('<') && cleanMsg.includes('>')) {
             const match = cleanMsg.match(/<(.+?)>\s*(.+)/);
             if (match) {
               const username = match[1];
               const chatMessage = match[2];
               
-              if (username !== bot.username) {
+              if (username && username !== bot.username) {
                 addGameLog(`💬 <${username}> ${chatMessage}`, botNumber);
                 
                 // Check for global leave command
@@ -653,13 +674,36 @@ function createNewBot(botNumber = 1, useNewIdentity = false, customName = null, 
               }
             }
           }
+          // Log other important messages
+          else if (cleanMsg.length > 5 && !cleanMsg.includes('§')) {
+            // Detect join/leave messages
+            if (cleanMsg.includes('joined') || cleanMsg.includes('left')) {
+              addGameLog(`👥 ${cleanMsg}`, botNumber);
+            }
+            // Detect death messages
+            else if (cleanMsg.includes('died') || cleanMsg.includes('slain') || 
+                     cleanMsg.includes('killed') || cleanMsg.includes('was killed')) {
+              addGameLog(`💀 ${cleanMsg}`, botNumber);
+            }
+            // Detect advancement messages
+            else if (cleanMsg.includes('achievement') || cleanMsg.includes('advancement')) {
+              addGameLog(`🏆 ${cleanMsg}`, botNumber);
+            }
+            // Log other server messages (excluding command errors)
+            else if (!cleanMsg.includes('Unknown command') && 
+                     !cleanMsg.includes('commands.message.display') &&
+                     !cleanMsg.includes('teleport') &&
+                     !cleanMsg.includes('actionbar')) {
+              addGameLog(`📝 ${cleanMsg}`, botNumber);
+            }
+          }
         }
       } catch (e) {
         // Silent fail
       }
     });
     
-    // Player join/leave detection via packets
+    // Method 2: Player join/leave detection via packets
     bot._client.on('player_info', (packet) => {
       try {
         if (packet.data && Array.isArray(packet.data)) {
@@ -681,6 +725,24 @@ function createNewBot(botNumber = 1, useNewIdentity = false, customName = null, 
         // Silent fail
       }
     });
+    
+    // Method 3: Message event (fallback)
+    bot.on('message', (jsonMsg) => {
+      try {
+        const message = jsonMsg.toString();
+        if (message && !message.includes('§') && message.length > 10) {
+          // Check if it's a chat message we haven't already captured
+          if (message.includes(':') && !message.includes('actionbar') && 
+              !message.includes('title') && !message.includes('subtitle')) {
+            addGameLog(`💬 ${message}`, botNumber);
+          }
+        }
+      } catch (e) {
+        // Silent fail
+      }
+    });
+    
+    // ========== END CHAT DETECTION ==========
     
     // PVP-STYLE MOVEMENTS (not AFK)
     const pvpMovements = () => {
@@ -779,41 +841,89 @@ function createNewBot(botNumber = 1, useNewIdentity = false, customName = null, 
       }
     });
     
-    // AUTH SEQUENCE
-    if (config.utils["auto-auth"]?.enabled) {
-      const pass = config.utils["auto-auth"].password;
-      
-      // Wait longer before sending first command
-      setTimeout(() => {
-        addGameLog(`🔐 Attempting to register with password: ${pass}`, botNumber);
-        bot.chat(`/register ${pass} ${pass}`);
+    // ========== IMPROVED AUTO-LOGIN SYSTEM ==========
+    
+    // Function to handle authentication
+    function handleAuthentication() {
+      if (config.utils["auto-auth"]?.enabled) {
+        const pass = config.utils["auto-auth"].password;
         
-        // Wait for server response before login
-        setTimeout(() => {
-          addGameLog(`🔑 Attempting to login...`, botNumber);
-          bot.chat(`/login ${pass}`);
-          
-          // Alternative command formats
+        addGameLog(`🔐 Starting authentication sequence...`, botNumber);
+        
+        // Try multiple authentication methods with delays
+        const authAttempts = [
+          { delay: 2000, command: `/login ${pass}`, desc: 'Standard login' },
+          { delay: 4000, command: `/l ${pass}`, desc: 'Short login' },
+          { delay: 6000, command: `/auth ${pass}`, desc: 'Auth command' },
+          { delay: 8000, command: `/register ${pass} ${pass}`, desc: 'Register then login' }
+        ];
+        
+        authAttempts.forEach((attempt, index) => {
           setTimeout(() => {
-            bot.chat(`/l ${pass}`); // Some servers use /l
-          }, 1000);
-          
-          if (config.utils["join-command"]?.enabled) {
-            const cmd = config.utils["join-command"].command;
-            setTimeout(() => {
-              addGameLog(`🎮 Sending join command: ${cmd}`, botNumber);
+            if (bot.entity) {
+              bot.chat(attempt.command);
+              addGameLog(`📤 ${attempt.desc}: ${attempt.command}`, botNumber);
+            }
+          }, attempt.delay);
+        });
+        
+        // Join command after authentication
+        if (config.utils["join-command"]?.enabled) {
+          const cmd = config.utils["join-command"].command;
+          setTimeout(() => {
+            if (bot.entity) {
               bot.chat(cmd);
-            }, 3000);
+              addGameLog(`🎮 Sent join command: ${cmd}`, botNumber);
+            }
+          }, 10000);
+        }
+      } else if (config.utils["join-command"]?.enabled) {
+        const cmd = config.utils["join-command"].command;
+        setTimeout(() => {
+          if (bot.entity) {
+            bot.chat(cmd);
+            addGameLog(`🎮 Sent join command: ${cmd}`, botNumber);
           }
-        }, 3000); // Increased from 2000 to 3000
-      }, 5000); // Wait longer after spawn
-    } else if (config.utils["join-command"]?.enabled) {
-      const cmd = config.utils["join-command"].command;
-      setTimeout(() => {
-        addGameLog(`🎮 Sending join command: ${cmd}`, botNumber);
-        bot.chat(cmd);
-      }, 5000);
+        }, 5000);
+      }
     }
+    
+    // Start authentication after spawn
+    setTimeout(() => {
+      handleAuthentication();
+    }, 3000);
+    
+    // Listen for authentication prompts
+    bot._client.on('chat', (packet) => {
+      try {
+        if (packet.message && typeof packet.message === 'string') {
+          const msg = packet.message.toLowerCase();
+          
+          // Check for auth-related messages
+          if (msg.includes('login') || msg.includes('register') || 
+              msg.includes('/login') || msg.includes('/register') ||
+              msg.includes('please login') || msg.includes('please register')) {
+            
+            addGameLog(`🔑 Server is asking for authentication`, botNumber);
+            
+            // Try to authenticate
+            if (config.utils["auto-auth"]?.enabled) {
+              const pass = config.utils["auto-auth"].password;
+              
+              setTimeout(() => {
+                bot.chat(`/login ${pass}`);
+                addGameLog(`📤 Attempting login with password`, botNumber);
+              }, 1000);
+            }
+          }
+        }
+      } catch (e) {
+        // Silent fail
+      }
+    });
+    
+    // ========== END AUTO-LOGIN SYSTEM ==========
+    
   });
   
   // KICK HANDLING - Bot stays in list
@@ -969,6 +1079,7 @@ app.get('/', (req, res) => {
         .log-ban { color: #ff4757; }
         .log-throttle { color: #ffb142; }
         .log-mock { color: #ff6bcb; }
+        .log-auth { color: #00d9ff; }
         
         /* Bot list */
         .bot-list { max-height: 300px; overflow-y: auto; margin-bottom: 1rem; }
@@ -1350,8 +1461,10 @@ app.get('/', (req, res) => {
                 
                 data.logs.forEach(log => {
                   let logClass = 'log-system';
+                  if (log.includes('Starting authentication') || log.includes('Standard login') || log.includes('Attempting login')) logClass = 'log-auth';
                   if (log.includes('"') && (log.includes('finished') || log.includes('wrong bot') || log.includes('Game over'))) logClass = 'log-mock';
                   if (log.includes('<') && log.includes('>')) logClass = 'log-chat';
+                  if (log.includes(':')) logClass = 'log-chat';
                   if (log.includes('joined')) logClass = 'log-join';
                   if (log.includes('left')) logClass = 'log-leave';
                   if (log.includes('killed') || log.includes('died') || log.includes('slain')) logClass = 'log-death';
