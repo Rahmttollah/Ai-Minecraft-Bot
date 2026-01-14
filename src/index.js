@@ -70,6 +70,111 @@ function getMockingMessage(playerName) {
   return messages[Math.floor(Math.random() * messages.length)];
 }
 
+// Weapon damage calculation
+function getWeaponDamage(itemName) {
+  const damages = {
+    // Swords
+    'netherite_sword': 8, 'diamond_sword': 7, 'iron_sword': 6,
+    'stone_sword': 5, 'golden_sword': 4, 'wooden_sword': 4,
+    
+    // Axes (higher damage but slower)
+    'netherite_axe': 10, 'diamond_axe': 9, 'iron_axe': 9,
+    'stone_axe': 9, 'golden_axe': 7, 'wooden_axe': 7,
+    
+    // Bows
+    'bow': 3, 'crossbow': 6,
+    
+    // Tridents
+    'trident': 9,
+    
+    // Misc
+    'mace': 10
+  };
+  
+  // Find matching weapon
+  for (const [weapon, damage] of Object.entries(damages)) {
+    if (itemName.includes(weapon)) {
+      return damage;
+    }
+  }
+  
+  return 1; // Fist damage
+}
+
+// Equip best weapon
+function equipBestWeapon(bot) {
+  const weapons = bot.inventory.items().filter(item => 
+    item.name.includes('sword') || 
+    item.name.includes('axe') ||
+    item.name.includes('bow') ||
+    item.name.includes('trident') ||
+    item.name.includes('mace')
+  );
+  
+  if (weapons.length > 0) {
+    // Prioritize swords, then axes, then bows
+    const weaponTypes = {
+      'sword': 3,
+      'axe': 2,
+      'trident': 2,
+      'mace': 2,
+      'bow': 1,
+      'crossbow': 1
+    };
+    
+    const bestWeapon = weapons.reduce((best, item) => {
+      const type = Object.keys(weaponTypes).find(t => item.name.includes(t));
+      const typeScore = type ? weaponTypes[type] : 0;
+      const damage = getWeaponDamage(item.name);
+      const totalScore = typeScore * 10 + damage;
+      
+      return totalScore > best.score ? { item, score: totalScore } : best;
+    }, { item: null, score: 0 });
+    
+    if (bestWeapon.item) {
+      bot.equip(bestWeapon.item, 'hand');
+      
+      // If it's a bow, get arrows too
+      if (bestWeapon.item.name.includes('bow')) {
+        const arrows = bot.inventory.items().filter(item => 
+          item.name.includes('arrow')
+        );
+        if (arrows.length > 0) {
+          bot.equip(arrows[0], 'off-hand');
+        }
+      }
+    }
+  }
+}
+
+// Equip best armor
+function equipBestArmor(bot) {
+  const armorSlots = {
+    'helmet': ['helmet', 'head'],
+    'chestplate': ['chestplate', 'chest'],
+    'leggings': ['leggings', 'legs'],
+    'boots': ['boots', 'feet']
+  };
+  
+  for (const [slot, keywords] of Object.entries(armorSlots)) {
+    const armorPieces = bot.inventory.items().filter(item => 
+      keywords.some(keyword => item.name.includes(keyword))
+    );
+    
+    if (armorPieces.length > 0) {
+      // Sort by material quality
+      const materialOrder = ['netherite', 'diamond', 'iron', 'chainmail', 'golden', 'leather'];
+      for (const material of materialOrder) {
+        const armor = armorPieces.find(item => item.name.includes(material));
+        if (armor) {
+          bot.equip(armor, slot);
+          break;
+        }
+      }
+    }
+  }
+}
+
 // Bot control functions
 function stopBot(botId) {
   const botData = allBots.get(botId);
@@ -135,38 +240,100 @@ function activateGlobalLeave() {
   }, 60000); // 1 minute
 }
 
-// Combat routine function
-function startCombatRoutine(bot, botNumber) {
-  if (!bot.combatMode || !bot.lockedTarget) return;
+// Improved combat routine
+function startAggressiveCombat(bot, botNumber, target) {
+  if (!bot.entity || !target) return;
   
-  const combatInterval = setInterval(() => {
-    if (!bot.entity || !bot.combatMode || !bot.lockedTarget) {
-      clearInterval(combatInterval);
-      return;
-    }
-    
-    const target = bot.lockedTarget;
-    const targetData = botTargets.get(botNumber);
-    
-    // Check if target is still valid
-    if (!target.isValid || target.health <= 0) {
-      // Target is dead or gone
+  const targetData = botTargets.get(botNumber);
+  if (!targetData) return;
+  
+  addGameLog(`🎯 Targeting ${targetData.targetPlayer}`, botNumber);
+  
+  // Start PVP
+  bot.pvp.attack(target);
+  
+  // Combat behavior loop
+  const combatLoop = setInterval(() => {
+    if (!bot.entity || !bot.combatMode || !bot.lockedTarget || 
+        !bot.lockedTarget.isValid || bot.lockedTarget.health <= 0) {
+      
+      // Combat ended
+      clearInterval(combatLoop);
+      bot.combatMode = false;
+      bot.lockedTarget = null;
+      
       if (targetData) {
-        const finalMessage = `${targetData.targetPlayer} has been dealt with!`;
-        bot.chat(finalMessage);
-        addGameLog(`🎯 Target eliminated: ${targetData.targetPlayer}`, botNumber);
+        addGameLog(`✅ Combat ended with ${targetData.targetPlayer}`, botNumber);
         botTargets.delete(botNumber);
       }
       
-      bot.combatMode = false;
-      bot.lockedTarget = null;
       bot.pvp.stop();
-      clearInterval(combatInterval);
       return;
     }
     
-    // Send occasional mocking messages (every 10-20 seconds)
-    if (targetData && Date.now() - targetData.lastMessageTime > 10000 + Math.random() * 10000) {
+    const currentTarget = bot.lockedTarget;
+    const distance = currentTarget.position.distanceTo(bot.entity.position);
+    
+    // Dynamic combat behavior
+    if (distance < 4) {
+      // Close combat - attack and strafe
+      bot.pvp.attack(currentTarget);
+      
+      // Strafing
+      if (Math.random() > 0.5) {
+        bot.setControlState('left', true);
+        setTimeout(() => bot.setControlState('left', false), 200);
+      } else {
+        bot.setControlState('right', true);
+        setTimeout(() => bot.setControlState('right', false), 200);
+      }
+      
+      // Jump occasionally (critical hits)
+      if (Math.random() > 0.7) {
+        bot.setControlState('jump', true);
+        setTimeout(() => bot.setControlState('jump', false), 100);
+      }
+      
+      // Try to block with shield
+      if (distance < 3.5 && Math.random() > 0.7) {
+        const shield = bot.inventory.items().find(item => 
+          item.name.includes('shield')
+        );
+        if (shield) {
+          bot.equip(shield, 'off-hand');
+          setTimeout(() => {
+            equipBestWeapon(bot);
+          }, 500);
+        }
+      }
+    } else if (distance < 16) {
+      // Medium range - approach while attacking
+      bot.pvp.attack(currentTarget);
+      bot.pathfinder.setGoal(new goals.GoalFollow(currentTarget, 3));
+    } else {
+      // Too far - just follow
+      bot.pathfinder.setGoal(new goals.GoalFollow(currentTarget, 3));
+    }
+    
+    // Health management
+    if (bot.health < 10) {
+      // Try to eat if low health
+      const foodItems = bot.inventory.items().filter(item => 
+        item.name.includes('apple') || 
+        item.name.includes('bread') || 
+        item.name.includes('cooked') ||
+        item.name.includes('potion')
+      );
+      
+      if (foodItems.length > 0 && Math.random() > 0.5) {
+        bot.equip(foodItems[0], 'hand');
+        bot.consume(() => {});
+        addGameLog(`🍗 Eating ${foodItems[0].name} for health`, botNumber);
+      }
+    }
+    
+    // Send occasional mocking messages
+    if (targetData && Date.now() - targetData.lastMessageTime > 8000 + Math.random() * 7000) {
       const message = getMockingMessage(targetData.targetPlayer);
       bot.chat(message);
       addGameLog(`🗣️ "${message}"`, botNumber);
@@ -174,24 +341,17 @@ function startCombatRoutine(bot, botNumber) {
       botTargets.set(botNumber, targetData);
     }
     
-    // Attack if in range
-    if (target.position.distanceTo(bot.entity.position) < 4) {
-      bot.pvp.attack(target);
-      
-      // Simple dodging - move sideways randomly
-      if (Math.random() > 0.5) {
-        bot.setControlState('left', true);
-        setTimeout(() => bot.setControlState('left', false), 300);
-      } else {
-        bot.setControlState('right', true);
-        setTimeout(() => bot.setControlState('right', false), 300);
-      }
-    } else {
-      // Move towards target
-      bot.pathfinder.setGoal(new goals.GoalFollow(target, 3));
+    // Check if combat has been going too long (30 seconds)
+    if (targetData.combatStart && Date.now() - targetData.combatStart > 30000) {
+      addGameLog(`⏰ Combat timeout with ${targetData.targetPlayer}, disengaging`, botNumber);
+      clearInterval(combatLoop);
+      bot.combatMode = false;
+      bot.lockedTarget = null;
+      botTargets.delete(botNumber);
+      bot.pvp.stop();
     }
     
-  }, 500);
+  }, 500); // Faster combat loop
 }
 
 // Web server
@@ -348,10 +508,25 @@ function createNewBot(botNumber = 1, useNewIdentity = false, customName = null, 
     if (mcData) {
       bot.loadPlugin(pathfinder);
       bot.loadPlugin(pvp);
+      
+      // Configure PVP plugin
       defaultMove = new Movements(bot, mcData);
       defaultMove.canDig = false;
       defaultMove.allow1by1towers = false;
       bot.pathfinder.setMovements(defaultMove);
+      
+      // PVP configuration
+      bot.pvp.on('stoppedAttacking', () => {
+        if (bot.lockedTarget) {
+          bot.lockedTarget = null;
+          bot.combatMode = false;
+        }
+      });
+      
+      // Set PVP range and settings
+      bot.pvp.followRange = 16;
+      bot.pvp.attackRange = 3.5;
+      bot.pvp.viewDistance = 32;
     }
   });
   
@@ -373,6 +548,18 @@ function createNewBot(botNumber = 1, useNewIdentity = false, customName = null, 
       if (botData) {
         botData.health = bot.health;
       }
+      
+      // Auto-heal if low
+      if (bot.health < 8) {
+        const foodItems = bot.inventory.items().filter(item => 
+          item.name.includes('apple') || item.name.includes('bread') || 
+          item.name.includes('cooked') || item.name.includes('potion')
+        );
+        if (foodItems.length > 0) {
+          bot.equip(foodItems[0], 'hand');
+          bot.consume(() => {});
+        }
+      }
     });
     
     bot.on('food', () => {
@@ -382,7 +569,14 @@ function createNewBot(botNumber = 1, useNewIdentity = false, customName = null, 
       }
     });
     
-    // Combat AI - Only attacks when attacked first
+    // Equip gear after spawning
+    setTimeout(() => {
+      equipBestArmor(bot);
+      equipBestWeapon(bot);
+      addGameLog(`⚔️ Equipped gear`, botNumber);
+    }, 2000);
+    
+    // IMPROVED COMBAT SYSTEM - Real PVP behavior
     bot.on('entityHurt', (entity) => {
       if (entity !== bot.entity) return;
       
@@ -392,49 +586,36 @@ function createNewBot(botNumber = 1, useNewIdentity = false, customName = null, 
       const recentDamage = damageEvents[damageEvents.length - 1];
       const attacker = recentDamage.attacker;
       
-      // Only attack if a player attacked first and we don't already have a target
-      if (attacker && attacker.type === 'player' && !bot.lockedTarget) {
-        bot.lockedTarget = attacker;
-        bot.combatMode = true;
-        bot.lastAttackTime = Date.now();
-        
-        const attackerName = attacker.username || 'Unknown';
-        
-        // Store target
-        botTargets.set(botNumber, {
-          targetPlayer: attackerName,
-          lastMessageTime: Date.now()
-        });
-        
-        // Send mocking message
-        const message = getMockingMessage(attackerName);
-        setTimeout(() => {
-          if (bot.entity) {
-            bot.chat(message);
-            addGameLog(`🗣️ "${message}"`, botNumber);
-          }
-        }, 1000);
-        
-        addGameLog(`🔒 Locked on ${attackerName}! Combat mode activated.`, botNumber);
-        
-        // Auto equip best weapon
-        const weapons = bot.inventory.items().filter(item => 
-          item.name.includes('sword') || item.name.includes('axe')
-        );
-        
-        if (weapons.length > 0) {
-          const bestWeapon = weapons.reduce((best, item) => {
-            const damage = getWeaponDamage(item.name);
-            return damage > best.damage ? { item, damage } : best;
-          }, { item: null, damage: 0 });
+      // Only attack if a player attacked first
+      if (attacker && attacker.type === 'player' && attacker.username !== bot.username) {
+        // Check if we're already in combat
+        if (!bot.combatMode) {
+          bot.lockedTarget = attacker;
+          bot.combatMode = true;
+          bot.lastAttackTime = Date.now();
           
-          if (bestWeapon.item) {
-            bot.equip(bestWeapon.item, 'hand');
-          }
+          const attackerName = attacker.username || 'Unknown';
+          
+          // Store target
+          botTargets.set(botNumber, {
+            targetPlayer: attackerName,
+            lastMessageTime: Date.now(),
+            combatStart: Date.now()
+          });
+          
+          // Send mocking message immediately
+          const message = getMockingMessage(attackerName);
+          bot.chat(message);
+          addGameLog(`🗣️ "${message}"`, botNumber);
+          
+          addGameLog(`⚔️ Engaged in combat with ${attackerName}!`, botNumber);
+          
+          // Auto equip best weapon immediately
+          equipBestWeapon(bot);
+          
+          // Start aggressive combat
+          startAggressiveCombat(bot, botNumber, attacker);
         }
-        
-        // Start combat routine
-        startCombatRoutine(bot, botNumber);
       }
     });
     
@@ -447,41 +628,154 @@ function createNewBot(botNumber = 1, useNewIdentity = false, customName = null, 
       bot.pvp.stop();
     });
     
-    // Chat logging with "bot leave" command detection
-    bot.on('chat', (username, message) => {
-      if (username !== bot.username) {
-        addGameLog(`💬 <${username}> ${message}`, botNumber);
-        
-        // Check for global leave command (case insensitive)
-        if (message.toLowerCase().includes('bot leave')) {
-          activateGlobalLeave();
+    // IMPROVED CHAT DETECTION - Works with Essential plugin
+    bot._client.on('chat', (packet) => {
+      try {
+        if (packet.message && typeof packet.message === 'string') {
+          const message = packet.message;
+          
+          // Clean color codes
+          const cleanMsg = message.replace(/§[0-9a-fk-or]/g, '').trim();
+          
+          if (cleanMsg.includes('<') && cleanMsg.includes('>')) {
+            const match = cleanMsg.match(/<(.+?)>\s*(.+)/);
+            if (match) {
+              const username = match[1];
+              const chatMessage = match[2];
+              
+              if (username !== bot.username) {
+                addGameLog(`💬 <${username}> ${chatMessage}`, botNumber);
+                
+                // Check for global leave command
+                if (chatMessage.toLowerCase().includes('bot leave')) {
+                  activateGlobalLeave();
+                }
+              }
+            }
+          }
         }
-      }
-      
-      if (message.toLowerCase().includes('was killed') || 
-          message.toLowerCase().includes('slain') ||
-          message.toLowerCase().includes('died')) {
-        addGameLog(`💀 ${message}`, botNumber);
-      }
-      
-      if (message.toLowerCase().includes('joined') || 
-          message.toLowerCase().includes('left') ||
-          message.toLowerCase().includes('achievement') ||
-          message.toLowerCase().includes('advancement')) {
-        addGameLog(`📢 ${message}`, botNumber);
+      } catch (e) {
+        // Silent fail
       }
     });
     
-    // Player join/leave events
-    bot.on('playerJoined', (player) => {
-      if (player.username !== bot.username) {
-        addGameLog(`➡️ ${player.username} joined the game`, botNumber);
+    // Player join/leave detection via packets
+    bot._client.on('player_info', (packet) => {
+      try {
+        if (packet.data && Array.isArray(packet.data)) {
+          packet.data.forEach(playerInfo => {
+            if (playerInfo && playerInfo.profile && playerInfo.profile.name) {
+              const username = playerInfo.profile.name;
+              
+              if (username !== bot.username) {
+                if (packet.action === 0) { // 0 = ADD_PLAYER (join)
+                  addGameLog(`➡️ ${username} joined the game`, botNumber);
+                } else if (packet.action === 4) { // 4 = REMOVE_PLAYER (leave)
+                  addGameLog(`⬅️ ${username} left the game`, botNumber);
+                }
+              }
+            }
+          });
+        }
+      } catch (e) {
+        // Silent fail
       }
     });
     
-    bot.on('playerLeft', (player) => {
-      if (player.username !== bot.username) {
-        addGameLog(`⬅️ ${player.username} left the game`, botNumber);
+    // PVP-STYLE MOVEMENTS (not AFK)
+    const pvpMovements = () => {
+      if (!bot?.entity) {
+        setTimeout(pvpMovements, 5000);
+        return;
+      }
+      
+      // Random PVP-like behaviors
+      const behaviors = [
+        // Look around
+        () => {
+          const yaw = Math.random() * Math.PI * 2;
+          const pitch = (Math.random() - 0.5) * Math.PI / 4;
+          bot.look(yaw, pitch, false);
+        },
+        
+        // Quick strafe
+        () => {
+          const direction = Math.random() > 0.5 ? 'left' : 'right';
+          bot.setControlState(direction, true);
+          setTimeout(() => bot.setControlState(direction, false), 300);
+        },
+        
+        // Jump (like checking surroundings)
+        () => {
+          bot.setControlState('jump', true);
+          setTimeout(() => bot.setControlState('jump', false), 100);
+        },
+        
+        // Sprint forward briefly
+        () => {
+          bot.setControlState('sprint', true);
+          bot.setControlState('forward', true);
+          setTimeout(() => {
+            bot.setControlState('forward', false);
+            bot.setControlState('sprint', false);
+          }, 500);
+        },
+        
+        // Crouch (sneak)
+        () => {
+          bot.setControlState('sneak', true);
+          setTimeout(() => bot.setControlState('sneak', false), 400);
+        }
+      ];
+      
+      // Execute random behavior
+      const behavior = behaviors[Math.floor(Math.random() * behaviors.length)];
+      behavior();
+      
+      // Schedule next movement
+      setTimeout(pvpMovements, 1000 + Math.random() * 3000);
+    };
+    
+    // Start PVP movements if enabled
+    if (config.utils["anti-afk"] !== false) {
+      pvpMovements();
+    }
+    
+    // PROACTIVE PLAYER DETECTION
+    bot.on('physicsTick', () => {
+      if (!bot.entity || bot.combatMode) return;
+      
+      // Look for nearby players
+      const nearbyPlayers = Object.values(bot.entities).filter(entity => 
+        entity.type === 'player' && 
+        entity.username !== bot.username &&
+        entity.position.distanceTo(bot.entity.position) < 10 &&
+        !entity.isSleeping
+      );
+      
+      if (nearbyPlayers.length > 0) {
+        const closestPlayer = nearbyPlayers.reduce((closest, player) => {
+          const dist = player.position.distanceTo(bot.entity.position);
+          return dist < closest.dist ? { player, dist } : closest;
+        }, { player: null, dist: Infinity });
+        
+        if (closestPlayer.player && closestPlayer.dist < 5) {
+          // Face players who get close
+          bot.lookAt(closestPlayer.player.position.offset(0, 1.6, 0));
+          
+          // Prepare weapon if player is looking at us
+          const playerLookingAtBot = Math.abs(
+            Math.atan2(
+              bot.entity.position.x - closestPlayer.player.position.x,
+              bot.entity.position.z - closestPlayer.player.position.z
+            ) - closestPlayer.player.yaw
+          ) < 0.5;
+          
+          if (playerLookingAtBot && closestPlayer.dist < 3) {
+            equipBestWeapon(bot);
+            addGameLog(`⚠️ Player ${closestPlayer.player.username} is nearby and looking at us`, botNumber);
+          }
+        }
       }
     });
     
@@ -489,46 +783,36 @@ function createNewBot(botNumber = 1, useNewIdentity = false, customName = null, 
     if (config.utils["auto-auth"]?.enabled) {
       const pass = config.utils["auto-auth"].password;
       
+      // Wait longer before sending first command
       setTimeout(() => {
+        addGameLog(`🔐 Attempting to register with password: ${pass}`, botNumber);
         bot.chat(`/register ${pass} ${pass}`);
         
+        // Wait for server response before login
         setTimeout(() => {
+          addGameLog(`🔑 Attempting to login...`, botNumber);
           bot.chat(`/login ${pass}`);
+          
+          // Alternative command formats
+          setTimeout(() => {
+            bot.chat(`/l ${pass}`); // Some servers use /l
+          }, 1000);
           
           if (config.utils["join-command"]?.enabled) {
             const cmd = config.utils["join-command"].command;
             setTimeout(() => {
+              addGameLog(`🎮 Sending join command: ${cmd}`, botNumber);
               bot.chat(cmd);
-            }, 2000);
+            }, 3000);
           }
-        }, 2000);
-      }, 2000);
+        }, 3000); // Increased from 2000 to 3000
+      }, 5000); // Wait longer after spawn
     } else if (config.utils["join-command"]?.enabled) {
       const cmd = config.utils["join-command"].command;
       setTimeout(() => {
+        addGameLog(`🎮 Sending join command: ${cmd}`, botNumber);
         bot.chat(cmd);
-      }, 4000);
-    }
-    
-    // ANTI-AFK movements
-    const movementLoop = () => {
-      if (!bot?.entity) {
-        setTimeout(movementLoop, 5000);
-        return;
-      }
-      
-      const states = ['forward', 'back', 'left', 'right', 'jump', 'sprint'];
-      const randomState = states[Math.floor(Math.random() * states.length)];
-      bot.setControlState(randomState, true);
-      
-      setTimeout(() => {
-        if (bot) bot.setControlState(randomState, false);
-        setTimeout(movementLoop, Math.floor(Math.random() * 5000) + 5000);
-      }, 1000);
-    };
-    
-    if (config.utils["anti-afk"] !== false) {
-      movementLoop();
+      }, 5000);
     }
   });
   
@@ -619,43 +903,6 @@ function createNewBot(botNumber = 1, useNewIdentity = false, customName = null, 
   });
   
   return bot;
-}
-
-// Helper functions
-function getWeaponDamage(itemName) {
-  const damages = {
-    'netherite_sword': 8, 'diamond_sword': 7, 'iron_sword': 6,
-    'stone_sword': 5, 'golden_sword': 4, 'wooden_sword': 4,
-    'netherite_axe': 10, 'diamond_axe': 9, 'iron_axe': 9,
-    'stone_axe': 9, 'golden_axe': 7, 'wooden_axe': 7,
-  };
-  return damages[itemName] || 1;
-}
-
-function getBestToolForBlock(blockName, bot) {
-  const toolMap = {
-    'diamond_ore': 'diamond_pickaxe', 'iron_ore': 'iron_pickaxe',
-    'gold_ore': 'iron_pickaxe', 'stone': 'pickaxe',
-    'log': 'axe', 'planks': 'axe', 'dirt': 'shovel',
-    'grass': 'shovel', 'sand': 'shovel', 'gravel': 'shovel'
-  };
-  
-  for (const [block, tool] of Object.entries(toolMap)) {
-    if (blockName.includes(block)) {
-      const tools = bot.inventory.items().filter(item => 
-        item.name.includes(tool.replace('pickaxe', '').replace('axe', '').replace('shovel', ''))
-      );
-      if (tools.length > 0) {
-        const materialOrder = ['netherite', 'diamond', 'iron', 'stone', 'golden', 'wooden'];
-        for (const material of materialOrder) {
-          const tool = tools.find(t => t.name.includes(material));
-          if (tool) return tool.name;
-        }
-        return tools[0].name;
-      }
-    }
-  }
-  return null;
 }
 
 // Web Interface Routes
@@ -1108,11 +1355,12 @@ app.get('/', (req, res) => {
                   if (log.includes('joined')) logClass = 'log-join';
                   if (log.includes('left')) logClass = 'log-leave';
                   if (log.includes('killed') || log.includes('died') || log.includes('slain')) logClass = 'log-death';
-                  if (log.includes('Attacked') || log.includes('Fighting') || log.includes('Locked on')) logClass = 'log-combat';
+                  if (log.includes('Attacked') || log.includes('Fighting') || log.includes('Locked on') || log.includes('Engaged') || log.includes('Targeting')) logClass = 'log-combat';
                   if (log.includes('[WEB]')) logClass = 'log-command';
                   if (log.includes('Kicked:')) logClass = 'log-kick';
                   if (log.includes('BAN detected')) logClass = 'log-ban';
                   if (log.includes('Connection throttled')) logClass = 'log-throttle';
+                  if (log.includes('Equipped') || log.includes('Eating') || log.includes('Player') || log.includes('nearby')) logClass = 'log-system';
                   
                   newHTML += \`<div class="log-entry \${logClass}">\${log}</div>\`;
                 });
