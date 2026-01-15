@@ -103,75 +103,86 @@ function getWeaponDamage(itemName) {
 
 // Equip best weapon
 function equipBestWeapon(bot) {
-  const weapons = bot.inventory.items().filter(item => 
-    item.name.includes('sword') || 
-    item.name.includes('axe') ||
-    item.name.includes('bow') ||
-    item.name.includes('trident') ||
-    item.name.includes('mace')
-  );
-  
-  if (weapons.length > 0) {
-    // Prioritize swords, then axes, then bows
-    const weaponTypes = {
-      'sword': 3,
-      'axe': 2,
-      'trident': 2,
-      'mace': 2,
-      'bow': 1,
-      'crossbow': 1
-    };
+  try {
+    const weapons = bot.inventory.items().filter(item => 
+      item && item.name && (
+        item.name.includes('sword') || 
+        item.name.includes('axe') ||
+        item.name.includes('bow') ||
+        item.name.includes('trident') ||
+        item.name.includes('mace')
+      )
+    );
     
-    const bestWeapon = weapons.reduce((best, item) => {
-      const type = Object.keys(weaponTypes).find(t => item.name.includes(t));
-      const typeScore = type ? weaponTypes[type] : 0;
-      const damage = getWeaponDamage(item.name);
-      const totalScore = typeScore * 10 + damage;
+    if (weapons.length > 0) {
+      // Prioritize swords, then axes, then bows
+      const weaponTypes = {
+        'sword': 3,
+        'axe': 2,
+        'trident': 2,
+        'mace': 2,
+        'bow': 1,
+        'crossbow': 1
+      };
       
-      return totalScore > best.score ? { item, score: totalScore } : best;
-    }, { item: null, score: 0 });
-    
-    if (bestWeapon.item) {
-      bot.equip(bestWeapon.item, 'hand');
+      const bestWeapon = weapons.reduce((best, item) => {
+        if (!item || !item.name) return best;
+        const type = Object.keys(weaponTypes).find(t => item.name.includes(t));
+        const typeScore = type ? weaponTypes[type] : 0;
+        const damage = getWeaponDamage(item.name);
+        const totalScore = typeScore * 10 + damage;
+        
+        return totalScore > best.score ? { item, score: totalScore } : best;
+      }, { item: null, score: 0 });
       
-      // If it's a bow, get arrows too
-      if (bestWeapon.item.name.includes('bow')) {
-        const arrows = bot.inventory.items().filter(item => 
-          item.name.includes('arrow')
-        );
-        if (arrows.length > 0) {
-          bot.equip(arrows[0], 'off-hand');
+      if (bestWeapon.item) {
+        bot.equip(bestWeapon.item, 'hand');
+        
+        // If it's a bow, get arrows too
+        if (bestWeapon.item.name.includes('bow')) {
+          const arrows = bot.inventory.items().filter(item => 
+            item && item.name && item.name.includes('arrow')
+          );
+          if (arrows.length > 0) {
+            bot.equip(arrows[0], 'off-hand');
+          }
         }
       }
     }
+  } catch (e) {
+    console.log(`[ERROR] equipBestWeapon: ${e.message}`);
   }
 }
 
 // Equip best armor
 function equipBestArmor(bot) {
-  const armorSlots = {
-    'helmet': ['helmet', 'head'],
-    'chestplate': ['chestplate', 'chest'],
-    'leggings': ['leggings', 'legs'],
-    'boots': ['boots', 'feet']
-  };
-  
-  for (const [slot, keywords] of Object.entries(armorSlots)) {
-    const armorPieces = bot.inventory.items().filter(item => 
-      keywords.some(keyword => item.name.includes(keyword))
-    );
+  try {
+    const armorSlots = {
+      'helmet': ['helmet', 'head'],
+      'chestplate': ['chestplate', 'chest'],
+      'leggings': ['leggings', 'legs'],
+      'boots': ['boots', 'feet']
+    };
     
-    if (armorPieces.length > 0) {
-      // Sort by material quality
-      const materialOrder = ['netherite', 'diamond', 'iron', 'chainmail', 'golden', 'leather'];
-      for (const material of materialOrder) {
-        const armor = armorPieces.find(item => item.name.includes(material));
-        if (armor) {
-          bot.equip(armor, slot);
-          break;
+    for (const [slot, keywords] of Object.entries(armorSlots)) {
+      const armorPieces = bot.inventory.items().filter(item => 
+        item && item.name && keywords.some(keyword => item.name.includes(keyword))
+      );
+      
+      if (armorPieces.length > 0) {
+        // Sort by material quality
+        const materialOrder = ['netherite', 'diamond', 'iron', 'chainmail', 'golden', 'leather'];
+        for (const material of materialOrder) {
+          const armor = armorPieces.find(item => item.name.includes(material));
+          if (armor) {
+            bot.equip(armor, slot);
+            break;
+          }
         }
       }
     }
+  } catch (e) {
+    console.log(`[ERROR] equipBestArmor: ${e.message}`);
   }
 }
 
@@ -250,12 +261,14 @@ function startAggressiveCombat(bot, botNumber, target) {
   addGameLog(`🎯 Targeting ${targetData.targetPlayer}`, botNumber);
   
   // Start PVP
-  bot.pvp.attack(target);
+  if (bot.pvp && bot.pvp.attack) {
+    bot.pvp.attack(target);
+  }
   
   // Combat behavior loop
   const combatLoop = setInterval(() => {
     if (!bot.entity || !bot.combatMode || !bot.lockedTarget || 
-        !bot.lockedTarget.isValid || bot.lockedTarget.health <= 0) {
+        !bot.lockedTarget.isValid || (bot.lockedTarget.health !== undefined && bot.lockedTarget.health <= 0)) {
       
       // Combat ended
       clearInterval(combatLoop);
@@ -267,7 +280,9 @@ function startAggressiveCombat(bot, botNumber, target) {
         botTargets.delete(botNumber);
       }
       
-      bot.pvp.stop();
+      if (bot.pvp && bot.pvp.stop) {
+        bot.pvp.stop();
+      }
       return;
     }
     
@@ -277,7 +292,9 @@ function startAggressiveCombat(bot, botNumber, target) {
     // Dynamic combat behavior
     if (distance < 4) {
       // Close combat - attack and strafe
-      bot.pvp.attack(currentTarget);
+      if (bot.pvp && bot.pvp.attack) {
+        bot.pvp.attack(currentTarget);
+      }
       
       // Strafing
       if (Math.random() > 0.5) {
@@ -297,7 +314,7 @@ function startAggressiveCombat(bot, botNumber, target) {
       // Try to block with shield
       if (distance < 3.5 && Math.random() > 0.7) {
         const shield = bot.inventory.items().find(item => 
-          item.name.includes('shield')
+          item && item.name && item.name.includes('shield')
         );
         if (shield) {
           bot.equip(shield, 'off-hand');
@@ -308,26 +325,36 @@ function startAggressiveCombat(bot, botNumber, target) {
       }
     } else if (distance < 16) {
       // Medium range - approach while attacking
-      bot.pvp.attack(currentTarget);
-      bot.pathfinder.setGoal(new goals.GoalFollow(currentTarget, 3));
+      if (bot.pvp && bot.pvp.attack) {
+        bot.pvp.attack(currentTarget);
+      }
+      if (bot.pathfinder && bot.pathfinder.setGoal) {
+        bot.pathfinder.setGoal(new goals.GoalFollow(currentTarget, 3));
+      }
     } else {
       // Too far - just follow
-      bot.pathfinder.setGoal(new goals.GoalFollow(currentTarget, 3));
+      if (bot.pathfinder && bot.pathfinder.setGoal) {
+        bot.pathfinder.setGoal(new goals.GoalFollow(currentTarget, 3));
+      }
     }
     
     // Health management
     if (bot.health < 10) {
       // Try to eat if low health
       const foodItems = bot.inventory.items().filter(item => 
-        item.name.includes('apple') || 
-        item.name.includes('bread') || 
-        item.name.includes('cooked') ||
-        item.name.includes('potion')
+        item && item.name && (
+          item.name.includes('apple') || 
+          item.name.includes('bread') || 
+          item.name.includes('cooked') ||
+          item.name.includes('potion')
+        )
       );
       
       if (foodItems.length > 0 && Math.random() > 0.5) {
         bot.equip(foodItems[0], 'hand');
-        bot.consume(() => {});
+        if (bot.consume) {
+          bot.consume(() => {});
+        }
         addGameLog(`🍗 Eating ${foodItems[0].name} for health`, botNumber);
       }
     }
@@ -348,7 +375,9 @@ function startAggressiveCombat(bot, botNumber, target) {
       bot.combatMode = false;
       bot.lockedTarget = null;
       botTargets.delete(botNumber);
-      bot.pvp.stop();
+      if (bot.pvp && bot.pvp.stop) {
+        bot.pvp.stop();
+      }
     }
     
   }, 500); // Faster combat loop
@@ -504,29 +533,27 @@ function createNewBot(botNumber = 1, useNewIdentity = false, customName = null, 
   let defaultMove = null;
   
   bot.on('inject_allowed', () => {
-    const mcData = require('minecraft-data')(bot.version || "1.20.1");
-    if (mcData) {
-      bot.loadPlugin(pathfinder);
-      bot.loadPlugin(pvp);
-      
-      // Configure PVP plugin
-      defaultMove = new Movements(bot, mcData);
-      defaultMove.canDig = false;
-      defaultMove.allow1by1towers = false;
-      bot.pathfinder.setMovements(defaultMove);
-      
-      // PVP configuration
-      bot.pvp.on('stoppedAttacking', () => {
-        if (bot.lockedTarget) {
-          bot.lockedTarget = null;
-          bot.combatMode = false;
+    try {
+      const mcData = require('minecraft-data')(bot.version || "1.20.1");
+      if (mcData) {
+        bot.loadPlugin(pathfinder);
+        bot.loadPlugin(pvp);
+        
+        // Configure PVP plugin
+        defaultMove = new Movements(bot, mcData);
+        defaultMove.canDig = false;
+        defaultMove.allow1by1towers = false;
+        bot.pathfinder.setMovements(defaultMove);
+        
+        // Set PVP range and settings
+        if (bot.pvp) {
+          bot.pvp.followRange = 16;
+          bot.pvp.attackRange = 3.5;
+          bot.pvp.viewDistance = 32;
         }
-      });
-      
-      // Set PVP range and settings
-      bot.pvp.followRange = 16;
-      bot.pvp.attackRange = 3.5;
-      bot.pvp.viewDistance = 32;
+      }
+    } catch (e) {
+      console.log(`[BOT ${botNumber}] Error loading plugins: ${e.message}`);
     }
   });
   
@@ -552,12 +579,16 @@ function createNewBot(botNumber = 1, useNewIdentity = false, customName = null, 
       // Auto-heal if low
       if (bot.health < 8) {
         const foodItems = bot.inventory.items().filter(item => 
-          item.name.includes('apple') || item.name.includes('bread') || 
-          item.name.includes('cooked') || item.name.includes('potion')
+          item && item.name && (
+            item.name.includes('apple') || item.name.includes('bread') || 
+            item.name.includes('cooked') || item.name.includes('potion')
+          )
         );
         if (foodItems.length > 0) {
           bot.equip(foodItems[0], 'hand');
-          bot.consume(() => {});
+          if (bot.consume) {
+            bot.consume(() => {});
+          }
         }
       }
     });
@@ -578,44 +609,48 @@ function createNewBot(botNumber = 1, useNewIdentity = false, customName = null, 
     
     // IMPROVED COMBAT SYSTEM - Real PVP behavior
     bot.on('entityHurt', (entity) => {
-      if (entity !== bot.entity) return;
-      
-      const damageEvents = Object.values(bot.entity.damageHistory || {});
-      if (damageEvents.length === 0) return;
-      
-      const recentDamage = damageEvents[damageEvents.length - 1];
-      const attacker = recentDamage.attacker;
-      
-      // Only attack if a player attacked first
-      if (attacker && attacker.type === 'player' && attacker.username !== bot.username) {
-        // Check if we're already in combat
-        if (!bot.combatMode) {
-          bot.lockedTarget = attacker;
-          bot.combatMode = true;
-          bot.lastAttackTime = Date.now();
-          
-          const attackerName = attacker.username || 'Unknown';
-          
-          // Store target
-          botTargets.set(botNumber, {
-            targetPlayer: attackerName,
-            lastMessageTime: Date.now(),
-            combatStart: Date.now()
-          });
-          
-          // Send mocking message immediately
-          const message = getMockingMessage(attackerName);
-          bot.chat(message);
-          addGameLog(`🗣️ "${message}"`, botNumber);
-          
-          addGameLog(`⚔️ Engaged in combat with ${attackerName}!`, botNumber);
-          
-          // Auto equip best weapon immediately
-          equipBestWeapon(bot);
-          
-          // Start aggressive combat
-          startAggressiveCombat(bot, botNumber, attacker);
+      try {
+        if (entity !== bot.entity) return;
+        
+        const damageEvents = Object.values(bot.entity.damageHistory || {});
+        if (damageEvents.length === 0) return;
+        
+        const recentDamage = damageEvents[damageEvents.length - 1];
+        const attacker = recentDamage.attacker;
+        
+        // Only attack if a player attacked first
+        if (attacker && attacker.type === 'player' && attacker.username !== bot.username) {
+          // Check if we're already in combat
+          if (!bot.combatMode) {
+            bot.lockedTarget = attacker;
+            bot.combatMode = true;
+            bot.lastAttackTime = Date.now();
+            
+            const attackerName = attacker.username || 'Unknown';
+            
+            // Store target
+            botTargets.set(botNumber, {
+              targetPlayer: attackerName,
+              lastMessageTime: Date.now(),
+              combatStart: Date.now()
+            });
+            
+            // Send mocking message immediately
+            const message = getMockingMessage(attackerName);
+            bot.chat(message);
+            addGameLog(`🗣️ "${message}"`, botNumber);
+            
+            addGameLog(`⚔️ Engaged in combat with ${attackerName}!`, botNumber);
+            
+            // Auto equip best weapon immediately
+            equipBestWeapon(bot);
+            
+            // Start aggressive combat
+            startAggressiveCombat(bot, botNumber, attacker);
+          }
         }
+      } catch (e) {
+        console.log(`[BOT ${botNumber}] Error in entityHurt: ${e.message}`);
       }
     });
     
@@ -625,13 +660,15 @@ function createNewBot(botNumber = 1, useNewIdentity = false, customName = null, 
       bot.combatMode = false;
       bot.lockedTarget = null;
       botTargets.delete(botNumber);
-      bot.pvp.stop();
+      if (bot.pvp && bot.pvp.stop) {
+        bot.pvp.stop();
+      }
     });
     
-    // ========== IMPROVED CHAT DETECTION FOR ESSENTIAL PLUGIN ==========
+    // ========== IMPROVED CHAT DETECTION ==========
     
-    // Method 1: Listen to ALL chat packets (most reliable for Essential)
-    bot._client.on('chat', (packet) => {
+    // Method 1: Raw packet listener for chat
+    const chatHandler = (packet) => {
       try {
         if (packet.message && typeof packet.message === 'string') {
           const rawMessage = packet.message;
@@ -689,7 +726,7 @@ function createNewBot(botNumber = 1, useNewIdentity = false, customName = null, 
             else if (cleanMsg.includes('achievement') || cleanMsg.includes('advancement')) {
               addGameLog(`🏆 ${cleanMsg}`, botNumber);
             }
-            // Log other server messages (excluding command errors)
+            // Log other server messages
             else if (!cleanMsg.includes('Unknown command') && 
                      !cleanMsg.includes('commands.message.display') &&
                      !cleanMsg.includes('teleport') &&
@@ -701,10 +738,13 @@ function createNewBot(botNumber = 1, useNewIdentity = false, customName = null, 
       } catch (e) {
         // Silent fail
       }
-    });
+    };
+    
+    // Add chat handler with proper cleanup
+    bot._client.on('chat', chatHandler);
     
     // Method 2: Player join/leave detection via packets
-    bot._client.on('player_info', (packet) => {
+    const playerInfoHandler = (packet) => {
       try {
         if (packet.data && Array.isArray(packet.data)) {
           packet.data.forEach(playerInfo => {
@@ -724,30 +764,28 @@ function createNewBot(botNumber = 1, useNewIdentity = false, customName = null, 
       } catch (e) {
         // Silent fail
       }
-    });
+    };
     
-    // Method 3: Message event (fallback)
-    bot.on('message', (jsonMsg) => {
+    bot._client.on('player_info', playerInfoHandler);
+    
+    // Clean up listeners on bot end
+    bot.on('end', () => {
       try {
-        const message = jsonMsg.toString();
-        if (message && !message.includes('§') && message.length > 10) {
-          // Check if it's a chat message we haven't already captured
-          if (message.includes(':') && !message.includes('actionbar') && 
-              !message.includes('title') && !message.includes('subtitle')) {
-            addGameLog(`💬 ${message}`, botNumber);
-          }
-        }
+        bot._client.removeListener('chat', chatHandler);
+        bot._client.removeListener('player_info', playerInfoHandler);
       } catch (e) {
-        // Silent fail
+        // Ignore cleanup errors
       }
     });
     
     // ========== END CHAT DETECTION ==========
     
     // PVP-STYLE MOVEMENTS (not AFK)
-    const pvpMovements = () => {
+    let movementInterval;
+    const startPvpMovements = () => {
       if (!bot?.entity) {
-        setTimeout(pvpMovements, 5000);
+        if (movementInterval) clearTimeout(movementInterval);
+        movementInterval = setTimeout(startPvpMovements, 5000);
         return;
       }
       
@@ -795,50 +833,70 @@ function createNewBot(botNumber = 1, useNewIdentity = false, customName = null, 
       behavior();
       
       // Schedule next movement
-      setTimeout(pvpMovements, 1000 + Math.random() * 3000);
+      movementInterval = setTimeout(startPvpMovements, 1000 + Math.random() * 3000);
     };
     
     // Start PVP movements if enabled
     if (config.utils["anti-afk"] !== false) {
-      pvpMovements();
+      startPvpMovements();
     }
     
+    // Clean up movement interval on bot end
+    bot.on('end', () => {
+      if (movementInterval) {
+        clearTimeout(movementInterval);
+      }
+    });
+    
     // PROACTIVE PLAYER DETECTION
-    bot.on('physicsTick', () => {
-      if (!bot.entity || bot.combatMode) return;
-      
-      // Look for nearby players
-      const nearbyPlayers = Object.values(bot.entities).filter(entity => 
-        entity.type === 'player' && 
-        entity.username !== bot.username &&
-        entity.position.distanceTo(bot.entity.position) < 10 &&
-        !entity.isSleeping
-      );
-      
-      if (nearbyPlayers.length > 0) {
-        const closestPlayer = nearbyPlayers.reduce((closest, player) => {
-          const dist = player.position.distanceTo(bot.entity.position);
-          return dist < closest.dist ? { player, dist } : closest;
-        }, { player: null, dist: Infinity });
+    const physicsTickHandler = () => {
+      try {
+        if (!bot.entity || bot.combatMode) return;
         
-        if (closestPlayer.player && closestPlayer.dist < 5) {
-          // Face players who get close
-          bot.lookAt(closestPlayer.player.position.offset(0, 1.6, 0));
+        // Look for nearby players
+        const nearbyPlayers = Object.values(bot.entities).filter(entity => 
+          entity && entity.type === 'player' && 
+          entity.username !== bot.username &&
+          entity.position && bot.entity.position &&
+          entity.position.distanceTo(bot.entity.position) < 10 &&
+          !entity.isSleeping
+        );
+        
+        if (nearbyPlayers.length > 0) {
+          const closestPlayer = nearbyPlayers.reduce((closest, player) => {
+            if (!player.position || !bot.entity.position) return closest;
+            const dist = player.position.distanceTo(bot.entity.position);
+            return dist < closest.dist ? { player, dist } : closest;
+          }, { player: null, dist: Infinity });
           
-          // Prepare weapon if player is looking at us
-          const playerLookingAtBot = Math.abs(
-            Math.atan2(
-              bot.entity.position.x - closestPlayer.player.position.x,
-              bot.entity.position.z - closestPlayer.player.position.z
-            ) - closestPlayer.player.yaw
-          ) < 0.5;
-          
-          if (playerLookingAtBot && closestPlayer.dist < 3) {
-            equipBestWeapon(bot);
-            addGameLog(`⚠️ Player ${closestPlayer.player.username} is nearby and looking at us`, botNumber);
+          if (closestPlayer.player && closestPlayer.dist < 5) {
+            // Face players who get close
+            bot.lookAt(closestPlayer.player.position.offset(0, 1.6, 0));
+            
+            // Prepare weapon if player is looking at us
+            const playerLookingAtBot = Math.abs(
+              Math.atan2(
+                bot.entity.position.x - closestPlayer.player.position.x,
+                bot.entity.position.z - closestPlayer.player.position.z
+              ) - closestPlayer.player.yaw
+            ) < 0.5;
+            
+            if (playerLookingAtBot && closestPlayer.dist < 3) {
+              equipBestWeapon(bot);
+              addGameLog(`⚠️ Player ${closestPlayer.player.username} is nearby and looking at us`, botNumber);
+            }
           }
         }
+      } catch (e) {
+        // Silent fail
       }
+    };
+    
+    bot.on('physicsTick', physicsTickHandler);
+    
+    // Clean up physics tick handler
+    bot.on('end', () => {
+      bot.removeListener('physicsTick', physicsTickHandler);
     });
     
     // ========== IMPROVED AUTO-LOGIN SYSTEM ==========
@@ -894,7 +952,7 @@ function createNewBot(botNumber = 1, useNewIdentity = false, customName = null, 
     }, 3000);
     
     // Listen for authentication prompts
-    bot._client.on('chat', (packet) => {
+    const authChatHandler = (packet) => {
       try {
         if (packet.message && typeof packet.message === 'string') {
           const msg = packet.message.toLowerCase();
@@ -919,6 +977,17 @@ function createNewBot(botNumber = 1, useNewIdentity = false, customName = null, 
         }
       } catch (e) {
         // Silent fail
+      }
+    };
+    
+    bot._client.on('chat', authChatHandler);
+    
+    // Clean up auth handler
+    bot.on('end', () => {
+      try {
+        bot._client.removeListener('chat', authChatHandler);
+      } catch (e) {
+        // Ignore cleanup errors
       }
     });
     
