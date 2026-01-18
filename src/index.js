@@ -187,35 +187,34 @@ function equipBestArmor(bot) {
 }
 
 // Dye Economy Automation Module
+// Dye Economy Automation Module - SIMPLE VERSION
 const dyeEconomyAutomation = (bot) => {
   const module = {
     config: {
       allowedItems: ['white_dye', 'green_dye', 'lime_dye'],
-
-      shop: {
-        white: '/shopgive Dyes page1.items.15 ',
-        green: '/shopgive Dyes page1.items.6 ',
-        sell: '/sellall Lime_dye'
+      
+      // Simple GUI navigation
+      gui: {
+        openShop: '/shop dyes',
+        greenSlot: 6,      // Green dye slot
+        whiteSlot: 15,     // White dye slot
+        quantitySlot: 32,  // Quantity button (32 items)
+        buySlot: 14,       // Buy/Confirm button
+        closeAfterBuy: true
       },
 
       inventory: {
-        mainSlots: 27,          // hotbar ignored
-        stackSize: 64,
-        halfSlots: 13,          // 13 white + 13 green
-        targetAmount: 13 * 64   // 832
+        targetAmount: 13 * 64   // 832 items (13 stacks)
       },
 
       delay: {
-        betweenSteps: [1500, 3000],
-        loop: [60000, 90000]
+        betweenClicks: 200,     // 200ms between clicks
+        guiOpenDelay: 1500,     // 1.5s for GUI to open
+        loopDelay: 60000        // 1 minute between cycles
       }
     },
 
     // ---------------- UTILS ----------------
-
-    rand(min, max) {
-      return min + Math.random() * (max - min);
-    },
 
     sleep(ms) {
       return new Promise(res => setTimeout(res, ms));
@@ -223,38 +222,193 @@ const dyeEconomyAutomation = (bot) => {
 
     countItem(bot, name) {
       return bot.inventory.items()
-        .filter(i => i.name === name)
+        .filter(i => i && i.name === name)
         .reduce((a, b) => a + b.count, 0);
     },
 
-    // ---------------- HOTBAR CLEAN ----------------
+    // ---------------- GUI BUY FUNCTION ----------------
+
+    async buyDye(bot, dyeSlot) {
+      try {
+        console.log(`[BOT ${bot.botId}] Buying dye from slot ${dyeSlot}`);
+        
+        // 1. Open shop
+        bot.chat(this.config.gui.openShop);
+        await this.sleep(this.config.delay.guiOpenDelay);
+        
+        if (!bot.currentWindow) {
+          console.log(`[BOT ${bot.botId}] Shop GUI didn't open`);
+          return false;
+        }
+        
+        // 2. Click dye slot
+        await bot.clickWindow(dyeSlot, 0);
+        await this.sleep(this.config.delay.betweenClicks);
+        
+        // 3. Click quantity slot (32 items)
+        await bot.clickWindow(this.config.gui.quantitySlot, 0);
+        await this.sleep(this.config.delay.betweenClicks);
+        
+        // 4. Click buy button
+        await bot.clickWindow(this.config.gui.buySlot, 0);
+        await this.sleep(this.config.delay.betweenClicks);
+        
+        // 5. Close GUI
+        if (this.config.gui.closeAfterBuy && bot.currentWindow) {
+          bot.closeWindow(bot.currentWindow);
+        }
+        
+        console.log(`[BOT ${bot.botId}] Successfully bought dye`);
+        return true;
+        
+      } catch (e) {
+        console.log(`[BOT ${bot.botId}] Buy error: ${e.message}`);
+        // Try to close GUI if open
+        if (bot.currentWindow) {
+          try {
+            bot.closeWindow(bot.currentWindow);
+          } catch {}
+        }
+        return false;
+      }
+    },
+
+    // ---------------- BUY DYES (FULL AMOUNT) ----------------
+
+    async ensureFullDyes(bot) {
+      const target = this.config.inventory.targetAmount;
+
+      // Check current amounts
+      const white = this.countItem(bot, 'white_dye');
+      const green = this.countItem(bot, 'green_dye');
+
+      console.log(`[BOT ${bot.botId}] Current: White=${white}, Green=${green}, Target=${target}`);
+
+      // Buy green dye if needed (each purchase = 32 items)
+      if (green < target) {
+        const neededPurchases = Math.ceil((target - green) / 32);
+        console.log(`[BOT ${bot.botId}] Need ${neededPurchases} purchases of green dye`);
+        
+        for (let i = 0; i < neededPurchases; i++) {
+          const success = await this.buyDye(bot, this.config.gui.greenSlot);
+          if (!success) break;
+          
+          // Wait a bit between purchases
+          if (i < neededPurchases - 1) {
+            await this.sleep(1000);
+          }
+          
+          // Check if we reached target
+          const currentGreen = this.countItem(bot, 'green_dye');
+          if (currentGreen >= target) break;
+        }
+      }
+
+      // Buy white dye if needed
+      if (white < target) {
+        const neededPurchases = Math.ceil((target - white) / 32);
+        console.log(`[BOT ${bot.botId}] Need ${neededPurchases} purchases of white dye`);
+        
+        for (let i = 0; i < neededPurchases; i++) {
+          const success = await this.buyDye(bot, this.config.gui.whiteSlot);
+          if (!success) break;
+          
+          if (i < neededPurchases - 1) {
+            await this.sleep(1000);
+          }
+          
+          const currentWhite = this.countItem(bot, 'white_dye');
+          if (currentWhite >= target) break;
+        }
+      }
+    },
+
+    // ---------------- CRAFT LIME DYE ----------------
+
+    async craftLime(bot) {
+      try {
+        const white = this.countItem(bot, 'white_dye');
+        const green = this.countItem(bot, 'green_dye');
+        
+        if (white === 0 || green === 0) {
+          console.log(`[BOT ${bot.botId}] No dyes to craft`);
+          return;
+        }
+        
+        // Each craft uses 1 white + 1 green = 2 lime
+        const maxCrafts = Math.min(white, green);
+        
+        if (maxCrafts <= 0) return;
+        
+        console.log(`[BOT ${bot.botId}] Crafting ${maxCrafts} lime dyes`);
+        
+        // Simple crafting - let mineflayer handle it
+        if (bot.mcData && bot.mcData.itemsByName.lime_dye) {
+          const limeId = bot.mcData.itemsByName.lime_dye.id;
+          
+          // Craft in reasonable batches
+          const batchSize = Math.min(maxCrafts, 16);
+          
+          try {
+            await bot.craft(limeId, batchSize, null);
+            console.log(`[BOT ${bot.botId}] Successfully crafted ${batchSize * 2} lime dye`);
+          } catch (craftError) {
+            console.log(`[BOT ${bot.botId}] Craft error: ${craftError.message}`);
+          }
+        } else {
+          console.log(`[BOT ${bot.botId}] mcData not available for crafting`);
+        }
+      } catch (e) {
+        console.log(`[BOT ${bot.botId}] Craft error: ${e.message}`);
+      }
+    },
+
+    // ---------------- SELL DYES ----------------
+
+    async sellDyes(bot) {
+      try {
+        const limeCount = this.countItem(bot, 'lime_dye');
+        if (limeCount === 0) {
+          console.log(`[BOT ${bot.botId}] No lime dye to sell`);
+          return false;
+        }
+        
+        console.log(`[BOT ${bot.botId}] Selling ${limeCount} lime dye`);
+        bot.chat('/sellall Lime_dye');
+        
+        await this.sleep(2000);
+        return true;
+      } catch (e) {
+        console.log(`[BOT ${bot.botId}] Sell error: ${e.message}`);
+        return false;
+      }
+    },
+
+    // ---------------- INVENTORY CLEANUP ----------------
 
     async cleanHotbar(bot) {
       try {
-        // Move any items from hotbar (slots 36-44) to inventory
+        // Move items from hotbar to inventory
         for (let slot = 36; slot < 45; slot++) {
           const item = bot.inventory.slots[slot];
           if (item) {
-            // Find empty slot in main inventory (0-35)
             for (let invSlot = 0; invSlot < 36; invSlot++) {
               if (!bot.inventory.slots[invSlot]) {
                 await bot.moveSlotItem(slot, invSlot);
-                await this.sleep(100);
+                await this.sleep(50);
                 break;
               }
             }
           }
         }
       } catch (e) {
-        console.log(`[BOT ${bot.botId}] Error cleaning hotbar: ${e.message}`);
+        console.log(`[BOT ${bot.botId}] Hotbar clean error: ${e.message}`);
       }
     },
 
-    // ---------------- INVENTORY CLEAN ----------------
-
     cleanInventory(bot) {
       try {
-        // Clean all items except allowed ones
+        // Remove non-dye items
         const itemsToRemove = bot.inventory.items().filter(item => 
           item && !this.config.allowedItems.includes(item.name)
         );
@@ -267,75 +421,7 @@ const dyeEconomyAutomation = (bot) => {
           }
         });
       } catch (e) {
-        console.log(`[BOT ${bot.botId}] Error cleaning inventory: ${e.message}`);
-      }
-    },
-
-    // ---------------- BUY DYES ----------------
-
-    async ensureFullDyes(bot) {
-      const target = this.config.inventory.targetAmount;
-
-      const white = this.countItem(bot, 'white_dye');
-      const green = this.countItem(bot, 'green_dye');
-
-      if (white < target) {
-        bot.chat(this.config.shop.white + (target - white));
-        await this.sleep(this.rand(800, 1500));
-      }
-
-      if (green < target) {
-        bot.chat(this.config.shop.green + (target - green));
-        await this.sleep(this.rand(800, 1500));
-      }
-    },
-
-    // ---------------- CRAFT (SAFE) ----------------
-
-    async craftLime(bot) {
-      try {
-        const mcData = require('minecraft-data')(bot.version);
-        
-        // Find lime dye recipe - recipes might be an object, not array
-        let recipe = null;
-        
-        if (Array.isArray(mcData.recipes)) {
-          // Old format: array
-          recipe = mcData.recipes.find(r => r.result?.name === 'lime_dye');
-        } else if (mcData.recipes && typeof mcData.recipes === 'object') {
-          // New format: object with recipe IDs
-          for (const recipeId in mcData.recipes) {
-            const r = mcData.recipes[recipeId];
-            if (r.result && r.result.name === 'lime_dye') {
-              recipe = r;
-              break;
-            }
-          }
-        }
-        
-        if (!recipe) {
-          // If no recipe found, try alternative method
-          const recipesByResult = mcData.recipesByResult;
-          if (recipesByResult && recipesByResult['lime_dye']) {
-            recipe = recipesByResult['lime_dye'][0];
-          }
-        }
-        
-        if (!recipe) {
-          console.log(`[BOT ${bot.botId}] No lime dye recipe found`);
-          return;
-        }
-
-        const times = Math.min(
-          this.countItem(bot, 'white_dye'),
-          this.countItem(bot, 'green_dye')
-        );
-
-        if (times <= 0) return;
-
-        await bot.craft(recipe, times, null); // inventory craft only
-      } catch (e) {
-        console.log(`[BOT ${bot.botId}] Error crafting lime dye: ${e.message}`);
+        console.log(`[BOT ${bot.botId}] Inventory clean error: ${e.message}`);
       }
     },
 
@@ -346,36 +432,37 @@ const dyeEconomyAutomation = (bot) => {
       if (!bot.entity || bot.combatMode || bot.lockedTarget) return;
 
       try {
-        // 0. Clean hotbar first (keep it empty)
+        console.log(`[BOT ${bot.botId}] === Starting Dye Cycle ===`);
+        
+        // 1. Cleanup
         await this.cleanHotbar(bot);
-        await this.sleep(this.rand(...this.config.delay.betweenSteps));
-
-        // 1. Clean inventory (remove non-dye items)
         this.cleanInventory(bot);
-        await this.sleep(this.rand(...this.config.delay.betweenSteps));
-
-        // 2. Buy dyes if needed
+        await this.sleep(1000);
+        
+        // 2. Buy dyes
         await this.ensureFullDyes(bot);
-        await this.sleep(this.rand(...this.config.delay.betweenSteps));
-
-        // 3. Clean hotbar again (in case buying put items in hotbar)
+        await this.sleep(2000);
+        
+        // 3. Clean hotbar again (in case items ended up there)
         await this.cleanHotbar(bot);
-        await this.sleep(this.rand(...this.config.delay.betweenSteps));
-
+        await this.sleep(1000);
+        
         // 4. Craft lime dye
         await this.craftLime(bot);
-        await this.sleep(this.rand(...this.config.delay.betweenSteps));
-
-        // 5. Clean hotbar again (in case crafting put items in hotbar)
+        await this.sleep(2000);
+        
+        // 5. Clean hotbar again
         await this.cleanHotbar(bot);
-        await this.sleep(this.rand(...this.config.delay.betweenSteps));
-
+        await this.sleep(1000);
+        
         // 6. Sell lime dye
-        if (this.countItem(bot, 'lime_dye') > 0) {
-          bot.chat(this.config.shop.sell);
-        }
+        await this.sellDyes(bot);
+        await this.sleep(2000);
+        
+        console.log(`[BOT ${bot.botId}] === Finished Dye Cycle ===`);
+        
       } catch (e) {
-        console.log(`[BOT ${bot.botId}] Error in dye cycle: ${e.message}`);
+        console.log(`[BOT ${bot.botId}] Cycle error: ${e.message}`);
       }
     },
 
@@ -384,20 +471,24 @@ const dyeEconomyAutomation = (bot) => {
     start(bot) {
       if (bot.dyeAutomationActive) return;
       bot.dyeAutomationActive = true;
+      console.log(`[BOT ${bot.botId}] Dye automation STARTED`);
 
       const loop = async () => {
         if (!bot.dyeAutomationActive) return;
 
         await this.runCycle(bot);
 
-        setTimeout(loop, this.rand(...this.config.delay.loop));
+        // Schedule next cycle
+        setTimeout(loop, this.config.delay.loopDelay);
       };
 
-      setTimeout(loop, this.rand(10000, 20000));
+      // Start first cycle after 10 seconds
+      setTimeout(loop, 10000);
     },
 
     stop(bot) {
       bot.dyeAutomationActive = false;
+      console.log(`[BOT ${bot.botId}] Dye automation STOPPED`);
     }
   };
 
