@@ -186,6 +186,144 @@ function equipBestArmor(bot) {
   }
 }
 
+// Dye Economy Automation Module
+const dyeEconomyAutomation = (bot) => {
+  const module = {
+    config: {
+      allowedItems: ['white_dye', 'green_dye', 'lime_dye'],
+
+      shop: {
+        white: '/shopgive Dyes page1.items.15 ',
+        green: '/shopgive Dyes page1.items.6 ',
+        sell: '/sellall Lime_dye'
+      },
+
+      inventory: {
+        mainSlots: 27,          // hotbar ignored
+        stackSize: 64,
+        halfSlots: 13,          // 13 white + 13 green
+        targetAmount: 13 * 64   // 832
+      },
+
+      delay: {
+        betweenSteps: [1500, 3000],
+        loop: [60000, 90000]
+      }
+    },
+
+    // ---------------- UTILS ----------------
+
+    rand(min, max) {
+      return min + Math.random() * (max - min);
+    },
+
+    sleep(ms) {
+      return new Promise(res => setTimeout(res, ms));
+    },
+
+    countItem(bot, name) {
+      return bot.inventory.items()
+        .filter(i => i.name === name)
+        .reduce((a, b) => a + b.count, 0);
+    },
+
+    // ---------------- INVENTORY CLEAN ----------------
+
+    cleanInventory(bot) {
+      bot.inventory.items().forEach(item => {
+        if (!this.config.allowedItems.includes(item.name)) {
+          bot.tossStack(item); // Q drop (silent)
+        }
+      });
+    },
+
+    // ---------------- BUY DYES ----------------
+
+    async ensureFullDyes(bot) {
+      const target = this.config.inventory.targetAmount;
+
+      const white = this.countItem(bot, 'white_dye');
+      const green = this.countItem(bot, 'green_dye');
+
+      if (white < target) {
+        bot.chat(this.config.shop.white + (target - white));
+        await this.sleep(this.rand(800, 1500));
+      }
+
+      if (green < target) {
+        bot.chat(this.config.shop.green + (target - green));
+        await this.sleep(this.rand(800, 1500));
+      }
+    },
+
+    // ---------------- CRAFT (SAFE) ----------------
+
+    async craftLime(bot) {
+      const mcData = require('minecraft-data')(bot.version);
+      const recipe = mcData.recipes.find(r => r.result?.name === 'lime_dye');
+      if (!recipe) return;
+
+      const times = Math.min(
+        this.countItem(bot, 'white_dye'),
+        this.countItem(bot, 'green_dye')
+      );
+
+      if (times <= 0) return;
+
+      try {
+        await bot.craft(recipe, times, null); // inventory craft only
+      } catch {}
+    },
+
+    // ---------------- MAIN LOOP ----------------
+
+    async runCycle(bot) {
+      if (!bot.dyeAutomationActive) return;
+      if (!bot.entity || bot.combatMode || bot.lockedTarget) return;
+
+      // 1. clean
+      this.cleanInventory(bot);
+      await this.sleep(this.rand(...this.config.delay.betweenSteps));
+
+      // 2. buy
+      await this.ensureFullDyes(bot);
+      await this.sleep(this.rand(...this.config.delay.betweenSteps));
+
+      // 3. craft
+      await this.craftLime(bot);
+      await this.sleep(this.rand(...this.config.delay.betweenSteps));
+
+      // 4. sell
+      if (this.countItem(bot, 'lime_dye') > 0) {
+        bot.chat(this.config.shop.sell);
+      }
+    },
+
+    // ---------------- START / STOP ----------------
+
+    start(bot) {
+      if (bot.dyeAutomationActive) return;
+      bot.dyeAutomationActive = true;
+
+      const loop = async () => {
+        if (!bot.dyeAutomationActive) return;
+
+        await this.runCycle(bot);
+
+        setTimeout(loop, this.rand(...this.config.delay.loop));
+      };
+
+      setTimeout(loop, this.rand(10000, 20000));
+    },
+
+    stop(bot) {
+      bot.dyeAutomationActive = false;
+    }
+  };
+
+  return module;
+};
+
 // Bot control functions
 function stopBot(botId) {
   const botData = allBots.get(botId);
@@ -516,6 +654,10 @@ function createNewBot(botNumber = 1, useNewIdentity = false, customName = null, 
   bot.lastAttackTime = 0;
   bot.combatMode = false;
   bot.controlState = botControlStates.get(botNumber) || 'RUNNING';
+  bot.dyeAutomationActive = false;
+  
+  // Initialize dye economy automation
+  const dyeModule = dyeEconomyAutomation(bot);
   
   // Update bot data in allBots map
   allBots.set(botNumber, {
@@ -527,7 +669,8 @@ function createNewBot(botNumber = 1, useNewIdentity = false, customName = null, 
     lastReconnectAttempt: Date.now(),
     health: 20,
     food: 20,
-    controlState: bot.controlState
+    controlState: bot.controlState,
+    dyeAutomation: dyeModule
   });
   
   let defaultMove = null;
@@ -992,6 +1135,14 @@ function createNewBot(botNumber = 1, useNewIdentity = false, customName = null, 
     });
     
     // ========== END AUTO-LOGIN SYSTEM ==========
+    
+    // Start dye economy automation if configured
+    if (config.utils["dye-economy"]?.enabled) {
+      setTimeout(() => {
+        dyeModule.start(bot);
+        addGameLog(`💰 Started dye economy automation`, botNumber);
+      }, 10000);
+    }
     
   });
   
