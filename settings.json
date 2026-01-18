@@ -22,6 +22,9 @@
     "join-command": {
       "enabled": true,
       "command": "/mvtp world"
+    },
+    "dye-economy": {
+      "enabled": true
     }
   },
   "combat": {
